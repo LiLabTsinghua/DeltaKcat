@@ -1,3 +1,13 @@
+"""Convert pairwise delta predictions back to absolute kcat estimates.
+
+The pairwise table contains rows with two entities and a predicted delta:
+- substrate setting: delta = log2(Value_1) - log2(Value_2)
+- sequence setting:  delta = log2(Value_1) - log2(Value_2)
+
+This utility reconstructs absolute predictions for one side of the pair
+using the other side as an anchor, then aggregates duplicates by mean.
+"""
+
 import pandas as pd
 from sklearn.metrics import mean_squared_error, r2_score
 from scipy.stats import pearsonr
@@ -6,14 +16,23 @@ from tqdm import tqdm
 
 
 def pair2abs_sub(train_path, result_path, output_path):
+    """Recover absolute substrate-level predictions from pairwise deltas.
+
+    Matching logic:
+    - If `Smiles_1` appears in train anchors, solve for `Smiles_2`.
+    - Otherwise, solve for `Smiles_1`.
+    """
     df_train = pd.read_csv(train_path)
+    # Build anchor substrate vocabulary from training pairs.
     df_train_smiles_1 = df_train['Smiles_1'].tolist()
     df_train_smiles_2 = df_train['Smiles_2'].tolist()
     df_train_smiles_1.extend(df_train_smiles_2)
     df_train_smiles = sorted(list(set(df_train_smiles_1)))
     df_test = pd.read_csv(result_path)
+    # Keep valid rows with complete GT/prediction fields.
     df_test = df_test[(df_test['Value_1'] != 0) & (df_test['Value_2'] != 0)]
     df_test = df_test[(df_test['log2_delta_kcat'].notna()) & (df_test['predict kcat'].notna())]
+    # Only keep rows where at least one side is in anchor vocabulary.
     df_test = df_test[(df_test['Smiles_1'].isin(df_train_smiles)) | (df_test['Smiles_2'].isin(df_train_smiles))]
 
     columns = ['PubmedID', 'Sequence', 'kcat_ratio', 'log2_delta_kcat', 'predict kcat']
@@ -30,29 +49,41 @@ def pair2abs_sub(train_path, result_path, output_path):
         new_row['kcat_ratio'] = row['kcat_ratio']
         new_row['log2_delta_kcat'] = row['log2_delta_kcat']
         if row['Smiles_1'] in df_train_smiles:
+            # delta = log2(v1) - log2(v2) => pred_abs(v2) = log2(v1) - pred_delta
             new_row['predict kcat'] = math.log2(row['Value_1']) - row['predict kcat']
             for col_old, col_new in cols_map_2.items():
                 new_row[col_new] = row[col_old]
         else:
+            # delta = log2(v1) - log2(v2) => pred_abs(v1) = log2(v2) + pred_delta
             new_row['predict kcat'] = math.log2(row['Value_2']) + row['predict kcat']
             for col_old, col_new in cols_map_1.items():
                 new_row[col_new] = row[col_old]
         df_result.loc[len(df_result)] = new_row
+    # Average duplicates produced from multiple pair reconstructions.
     df_result['predict kcat'] = df_result.groupby(['Smiles', 'Sequence', 'PubmedID'])['predict kcat'].transform('mean')
     df_result = df_result.drop_duplicates(subset=['Smiles', 'Sequence', 'PubmedID'])
     df_result.to_csv(output_path, index=False)
 
 
 def pair2abs_seq(train_path, result_path, output_path):
+    """Recover absolute sequence-level predictions from pairwise deltas.
+
+    Matching logic:
+    - If `Sequence_1` appears in train anchors, solve for `Sequence_2`.
+    - Otherwise, solve for `Sequence_1`.
+    """
     df_train = pd.read_csv(train_path)
+    # Build anchor sequence vocabulary from training pairs.
     df_train_smiles_1 = df_train['Sequence_1'].tolist()
     df_train_smiles_2 = df_train['Sequence_2'].tolist()
     df_train_smiles_1.extend(df_train_smiles_2)
     df_train_smiles = sorted(list(set(df_train_smiles_1)))
     print(len(df_train_smiles))
     df_test = pd.read_csv(result_path)
+    # Keep valid rows with complete GT/prediction fields.
     df_test = df_test[(df_test['Value_1'] != 0) & (df_test['Value_2'] != 0)]
     df_test = df_test[(df_test['log2_delta_kcat'].notna()) & (df_test['predict kcat'].notna())]
+    # Only keep rows where at least one side is in anchor vocabulary.
     df_test = df_test[(df_test['Sequence_1'].isin(df_train_smiles)) | (df_test['Sequence_2'].isin(df_train_smiles))]
 
     columns = ['PubmedID', 'Smiles', 'kcat_ratio', 'log2_delta_kcat', 'predict kcat']
@@ -69,20 +100,24 @@ def pair2abs_seq(train_path, result_path, output_path):
         new_row['kcat_ratio'] = row['kcat_ratio']
         new_row['log2_delta_kcat'] = row['log2_delta_kcat']
         if row['Sequence_1'] in df_train_smiles:
+            # delta = log2(v1) - log2(v2) => pred_abs(v2) = log2(v1) - pred_delta
             new_row['predict kcat'] = math.log2(row['Value_1']) - row['predict kcat']
             for col_old, col_new in cols_map_2.items():
                 new_row[col_new] = row[col_old]
         else:
+            # delta = log2(v1) - log2(v2) => pred_abs(v1) = log2(v2) + pred_delta
             new_row['predict kcat'] = math.log2(row['Value_2']) + row['predict kcat']
             for col_old, col_new in cols_map_1.items():
                 new_row[col_new] = row[col_old]
         df_result.loc[len(df_result)] = new_row
+    # Average duplicates produced from multiple pair reconstructions.
     df_result['predict kcat'] = df_result.groupby(['Smiles', 'Sequence', 'PubmedID'])['predict kcat'].transform('mean')
     df_result = df_result.drop_duplicates(subset=['Smiles', 'Sequence', 'PubmedID'])
     df_result.to_csv(output_path, index=False)
 
 
 if __name__ == '__main__':
+    # Example conversions for substrate-relative and sequence-relative outputs.
     pair2abs_sub(train_path='../Data/kcat_pair_sub/Train_pair_sub_kcat_cold.csv',
                  result_path='../Result/kcat/Test_cold_kcat_sub_gate.csv',
                  output_path='../Result/kcat/Test_cold_kcat_sub_gate_pair2abs.csv')

@@ -1,3 +1,13 @@
+"""Generate MolT5 embeddings for SMILES and save them to a pickle file.
+
+Typical flow:
+1) Read SMILES strings from a dataset.
+2) Canonicalize each SMILES with RDKit.
+3) Encode with MolT5 and mean-pool token embeddings.
+4) Save mapping {smiles: embedding_vector}.
+"""
+
+import argparse
 import torch
 from transformers import T5EncoderModel, T5Tokenizer
 import re
@@ -12,18 +22,18 @@ from tqdm import tqdm
 from rdkit.Chem import MACCSkeys
 
 
+# Canonicalize a raw SMILES string so downstream embedding lookup is consistent.
 def normalize_smiles(smiles):
     """
-    规范化 SMILES 字符串并添加氢原子.
-
-    :param smiles_list: SMILES 字符串的列表
-    :return: 规范化后的 SMILES 字符串列表
+    Normalize the SMILES string and add hydrogen atoms.
+        :param smiles_list: List of SMILES strings
+        :return: List of normalized SMILES strings
     """
+    # Returns empty string if parsing fails; caller may filter it later.
     normalized = ''
     try:
         mol = Chem.MolFromSmiles(smiles)
         if mol is not None:
-            # mol = Chem.AddHs(mol)
             normalized = Chem.MolToSmiles(mol, canonical=True)
         else:
             print(f"Invalid SMILES: {smiles}")
@@ -33,36 +43,83 @@ def normalize_smiles(smiles):
     return normalized
 
 
-def get_molT5_embed(smiles_list, outpath):
-    Molt5_model = "/home/xiongwen/software/molt5-base-smiles2caption"
-    tokenizer = T5Tokenizer.from_pretrained(Molt5_model)
-    model = T5EncoderModel.from_pretrained(Molt5_model)
+def get_molT5_embed(smiles_list, output_dir, model_dir):
+    """Encode SMILES with MolT5 and store pooled embeddings in a pickle file.
+
+    Args:
+        smiles_list: Canonical SMILES strings.
+        output_pkl: Target pickle path for `{smiles: embedding_vector}`.
+        model_dir: Local MolT5 model directory path.
+    """
+    # Build tokenizer/encoder once for the whole batch.
+    tokenizer = T5Tokenizer.from_pretrained(model_dir)
+    model = T5EncoderModel.from_pretrained(model_dir)
+    # Count input entries and prepare output map.
     N_smiles = len(smiles_list)
     smiles_reprs = {}
+    # Special handling when all elements are the same SMILES string.
     if len(set(smiles_list)) == 1:
         input_ids = tokenizer(smiles_list[0], return_tensors="pt").input_ids
         outputs = model(input_ids=input_ids)
         last_hidden_states = outputs.last_hidden_state
+        # Mean-pool token embeddings (exclude final special token row).
         embed = torch.mean(last_hidden_states[0][:-1, :], axis=0).detach().cpu().numpy()
         final_values = np.concatenate([embed.reshape(1, -1)] * N_smiles, axis=0)
     else:
         final_values = []
+        # Encode each molecule independently and cache embedding by SMILES key.
         for smile in tqdm(smiles_list):
             input_ids = tokenizer(smile, return_tensors="pt").input_ids
             outputs = model(input_ids=input_ids)
             last_hidden_states = outputs.last_hidden_state
             embed = torch.mean(last_hidden_states[0][:-1, :], axis=0).detach().cpu().numpy()
-            # seq_emb_pad, seq_mask = pad_and_mask(seq_emb, 1024)
             smiles_reprs[smile] = embed
             final_values.append(embed.reshape(1, -1))
-    with open(join(outpath, "SMILES", "SMILES_embedding_molT5"+".pkl"), 'wb') as handle:
+
+    # Ensure output directory exists before writing pickle.
+    output_dir = join(output_dir, "SMILES")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Persist dictionary for training/inference pipeline reuse.
+    with open(join(output_dir, "SMILES_embedding_molT5.pkl"), 'wb') as handle:
         pickle.dump(smiles_reprs, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
+def parse_args():
+    """Parse command-line arguments for MolT5 embedding generation."""
+    parser = argparse.ArgumentParser(description='Generate MolT5 SMILES embeddings from a CSV file.')
+    parser.add_argument(
+        '--input_csv',
+        type=str,
+        default='/path/input_data.csv',
+        help='Input CSV path containing SMILES strings.'
+    )
+    parser.add_argument(
+        '--output_dir',
+        type=str,
+        default='/path/embedding_path/',
+        help='Output pickle file path, e.g. /path/.'
+    )
+    parser.add_argument(
+        '--model_dir',
+        type=str,
+        default='/path/molt5-base-smiles2caption',
+        help='Local MolT5 model directory path.'
+    )
+    parser.add_argument(
+        '--smiles_col',
+        type=str,
+        default='Smiles',
+        help='CSV column name that stores SMILES strings.'
+    )
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-    df = pd.read_csv('/home/xiongwen/DeltaKcat/Data/kkm/kkm_diff_all.csv')
-    smiles_list = df['Smiles'].tolist()
+    # CLI entry point: read SMILES, canonicalize/deduplicate, and export embeddings.
+    args = parse_args()
+    df = pd.read_csv(args.input_csv)
+    smiles_list = df[args.smiles_col].tolist()[:100]
     smiles_list = [normalize_smiles(x) for x in smiles_list if isinstance(x, str)]
     smiles_list = sorted(list(set(smiles_list)))
-    get_molT5_embed(smiles_list, '/home/xiongwen/DeltaKcat/Embedding/kkm_embedding_all/')
+    get_molT5_embed(smiles_list, args.output_dir, args.model_dir)
