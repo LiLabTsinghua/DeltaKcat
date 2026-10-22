@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch_geometric.data import Batch, Data
 from tqdm import tqdm
 from transformers import T5EncoderModel, T5Tokenizer
-from Model.DelKcat_sequence import DelKcat_gate
+from DeltaKcat_sequence_model import DeltaKcat_gate
 
 
 # Disable verbose RDKit logs to keep terminal output clean.
@@ -301,7 +301,7 @@ def main():
     )
 
     # Build model with the same constructor signature used by project training scripts.
-    model = DelKcat_gate(167, 512, 1280, 1, 0, 10, device).to(device)
+    model = DeltaKcat_gate(512,  0,  device).to(device)
     ckpt = torch.load(args.deltakcat_model_path, map_location=device)
     state_dict = ckpt['state_dict'] if isinstance(ckpt, dict) and 'state_dict' in ckpt else ckpt
     # Accept checkpoints saved by DataParallel (keys prefixed with "module.").

@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch_geometric.data import Batch, Data
 from tqdm import tqdm
 from transformers import T5EncoderModel, T5Tokenizer
-from Github.Model.DelKcat_substrate import DelKcat_gate
+from DeltaKcat_substrate_model import DeltaKcat_gate
 
 
 # Silence RDKit warnings for cleaner prediction logs.
@@ -298,7 +298,7 @@ def main():
     )
 
     # Build model with the same constructor behavior as train_derta_substrate.
-    model = DelKcat_gate(args.hidden_dim, args.dropout, device).to(device)
+    model = DeltaKcat_gate(args.hidden_dim, args.dropout, device).to(device)
     ckpt = torch.load(args.deltakcat_model_path, map_location=device)
     state_dict = ckpt['state_dict'] if isinstance(ckpt, dict) and 'state_dict' in ckpt else ckpt
     if any(k.startswith('module.') for k in state_dict.keys()):

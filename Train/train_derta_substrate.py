@@ -1,6 +1,6 @@
 import time
 import pandas as pd
-from Github.Model.DelKcat_substrate import DelKcat_gate
+from DeltaKcat_substrate_model import DeltaKcat_gate
 from tqdm import tqdm
 from torch_geometric.data import Data, Batch
 from dataset_loader import normalize_smiles, MyDataset, MyDataLoader
@@ -118,7 +118,7 @@ def kineticsTrainer(arg):
     print(f"used device {device}")
 
     # Initialize model with the project's original hyperparameter signature.
-    model = DelKcat_gate(512, 0, device)
+    model = DeltaKcat_gate(512, 0, device)
     """Train setting."""
     # Resolve input paths for dataset and sequence index mapping.
     fasta_path = arg.embedding_path + '/sequences_prottrans.fasta'
